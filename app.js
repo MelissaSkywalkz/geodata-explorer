@@ -292,27 +292,124 @@ function loadCSVStr(text, name = 'CSV') {
     const keys = Object.keys(rows[0]);
     const latCol = findCol(keys, ['lat','latitude','latitud','y','north','northing','wgs84_lat']);
     const lonCol = findCol(keys, ['lon','lng','long','longitude','longitud','x','east','easting','wgs84_lon']);
+    const geomCol = findCol(keys, ['_geometry','geometry','geom','wkt','shape','the_geom']);
 
-    if (!latCol || !lonCol) {
-      toast(`CSV: ${rows.length} rader — lägg till lat/lon-kolumner för kartvisning`, 'warning');
-      setStatus(`CSV inläst: ${rows.length} rader (ingen geometri hittad)`);
-      showLoading(false);
+    // WKT geometry column (e.g. MULTILINESTRING Z, POINT, POLYGON...)
+    if (geomCol) {
+      const features = rows
+        .map(r => {
+          const wkt = String(r[geomCol] || '').trim();
+          if (!wkt) return null;
+          const geometry = parseWKT(wkt);
+          if (!geometry) return null;
+          const props = { ...r };
+          delete props[geomCol];
+          return { type: 'Feature', geometry, properties: props };
+        })
+        .filter(Boolean);
+
+      if (features.length) {
+        loadGeoJSONObj({ type: 'FeatureCollection', features }, name);
+        return;
+      }
+    }
+
+    // Lat/lon columns
+    if (latCol && lonCol) {
+      const features = rows
+        .filter(r => r[latCol] != null && r[lonCol] != null && !isNaN(r[latCol]) && !isNaN(r[lonCol]))
+        .map(r => ({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [+r[lonCol], +r[latCol]] },
+          properties: r
+        }));
+      loadGeoJSONObj({ type: 'FeatureCollection', features }, name);
       return;
     }
 
-    const features = rows
-      .filter(r => r[latCol] != null && r[lonCol] != null && !isNaN(r[latCol]) && !isNaN(r[lonCol]))
-      .map(r => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [+r[lonCol], +r[latCol]] },
-        properties: r
-      }));
-
-    loadGeoJSONObj({ type: 'FeatureCollection', features }, name);
+    toast(`CSV: ${rows.length} rader — ingen geometrikolumn hittad (lat/lon eller WKT)`, 'warning');
+    setStatus(`CSV inläst: ${rows.length} rader (ingen geometri)`);
+    showLoading(false);
   } catch (err) {
     toast(err.message, 'error');
     showLoading(false);
   }
+}
+
+// ─── WKT parser (POINT, LINESTRING, POLYGON, MULTILINESTRING, MULTIPOLYGON) ──
+function parseWKT(wkt) {
+  // Strip Z/M/ZM dimension markers and normalize whitespace
+  const clean = wkt
+    .replace(/\bZ\b/gi, '').replace(/\bM\b/gi, '').replace(/\bZM\b/gi, '')
+    .replace(/\s+/g, ' ').trim();
+
+  try {
+    if (/^POINT\s*\(/i.test(clean)) {
+      const [lon, lat] = clean.replace(/[^0-9.\s\-]/g, ' ').trim().split(/\s+/).map(Number);
+      return { type: 'Point', coordinates: [lon, lat] };
+    }
+
+    if (/^LINESTRING\s*\(/i.test(clean)) {
+      return { type: 'LineString', coordinates: parseCoordSeq(clean.replace(/^LINESTRING\s*/i, '')) };
+    }
+
+    if (/^MULTILINESTRING\s*\(/i.test(clean)) {
+      const inner = clean.replace(/^MULTILINESTRING\s*/i, '').trim().slice(1, -1);
+      const lines = splitRings(inner);
+      return { type: 'MultiLineString', coordinates: lines.map(parseCoordSeq) };
+    }
+
+    if (/^POLYGON\s*\(/i.test(clean)) {
+      const inner = clean.replace(/^POLYGON\s*/i, '').trim().slice(1, -1);
+      const rings = splitRings(inner);
+      return { type: 'Polygon', coordinates: rings.map(parseCoordSeq) };
+    }
+
+    if (/^MULTIPOLYGON\s*\(/i.test(clean)) {
+      const inner = clean.replace(/^MULTIPOLYGON\s*/i, '').trim().slice(1, -1);
+      // Split polygons — each is wrapped in ()
+      const polys = splitPolygons(inner);
+      return {
+        type: 'MultiPolygon',
+        coordinates: polys.map(poly => {
+          const rings = splitRings(poly.trim().slice(1, -1));
+          return rings.map(parseCoordSeq);
+        })
+      };
+    }
+  } catch {}
+  return null;
+}
+
+function parseCoordSeq(str) {
+  // str like "(13.1 58.2 0, 13.3 58.4 0)" or "13.1 58.2, 13.3 58.4"
+  const inner = str.trim().replace(/^\(/, '').replace(/\)$/, '');
+  return inner.split(',').map(pair => {
+    const nums = pair.trim().split(/\s+/).map(Number).filter(n => !isNaN(n));
+    return [nums[0], nums[1]]; // lon, lat only (drop Z)
+  }).filter(c => c.length === 2 && !c.some(isNaN));
+}
+
+function splitRings(str) {
+  // Split "(...), (...)" into ["(...)", "(...)"]
+  const rings = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '(') { if (depth === 0) start = i; depth++; }
+    else if (str[i] === ')') { depth--; if (depth === 0) rings.push(str.slice(start, i + 1)); }
+  }
+  return rings;
+}
+
+function splitPolygons(str) {
+  // MultiPolygon inner: "((ring),(ring)), ((ring))"
+  const polys = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '(') { if (depth === 0) start = i; depth++; }
+    else if (str[i] === ')') { depth--; if (depth === 0) polys.push(str.slice(start, i + 1)); }
+  }
+  return polys;
 }
 
 // ─── WMS ─────────────────────────────────────────────────────────────────────
@@ -786,16 +883,20 @@ function checkUrlParams() {
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 async function fetchCORS(url) {
-  // Try direct first (works for CORS-enabled APIs)
+  // Always try direct first
   try {
-    const res = await fetch(url, { mode: 'cors' });
+    const res = await fetch(url);
     if (res.ok) return res;
   } catch {}
-  // Fallback to CORS proxy
-  const proxied = 'https://corsproxy.io/?' + encodeURIComponent(url);
-  const res = await fetch(proxied);
-  if (!res.ok) throw new Error(`HTTP ${res.status} — kontrollera URL`);
-  return res;
+  // Fallback: CORS proxy
+  try {
+    const proxied = 'https://corsproxy.io/?' + encodeURIComponent(url);
+    const res = await fetch(proxied);
+    if (res.ok) return res;
+    throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    throw new Error(`Kunde inte hämta URL. Kontrollera att adressen är korrekt och publikt tillgänglig. (${err.message})`);
+  }
 }
 
 function nameFrom(url) {
