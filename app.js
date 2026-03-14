@@ -883,20 +883,25 @@ function checkUrlParams() {
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 async function fetchCORS(url) {
-  // Always try direct first
+  // Try direct first
   try {
     const res = await fetch(url);
     if (res.ok) return res;
   } catch {}
-  // Fallback: CORS proxy
+
+  // Proxy 1: corsproxy.io
   try {
-    const proxied = 'https://corsproxy.io/?' + encodeURIComponent(url);
-    const res = await fetch(proxied);
+    const res = await fetch('https://corsproxy.io/?' + encodeURIComponent(url));
     if (res.ok) return res;
-    throw new Error(`HTTP ${res.status}`);
-  } catch (err) {
-    throw new Error(`Kunde inte hämta URL. Kontrollera att adressen är korrekt och publikt tillgänglig. (${err.message})`);
-  }
+  } catch {}
+
+  // Proxy 2: allorigins (sends browser-like headers, works on stricter servers)
+  try {
+    const res = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url));
+    if (res.ok) return res;
+  } catch {}
+
+  throw new Error('Servern blockerar extern åtkomst (403/CORS). Prova att ladda ned filen och dra in den istället.');
 }
 
 function nameFrom(url) {
