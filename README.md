@@ -2,7 +2,7 @@
 
 **Förhandsgranska öppen geodata direkt i webbläsaren — ingen installation, ingen backend, ingen inloggning.**
 
-Ett enkelt och återanvändbart verktyg för att snabbt visualisera öppna dataset på karta. Byggt som ett komplement till [dataportal.se](https://www.dataportal.se), där inbyggd kartvisning ofta saknas.
+Ett enkelt och återanvändbart verktyg för att snabbt visualisera öppna dataset på karta. Byggt som ett komplement till [dataportal.se](https://www.dataportal.se).
 
 🔗 **[Öppna live-demo](https://melissaskywalkz.github.io/geodata-explorer)**
 
