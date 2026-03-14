@@ -179,9 +179,15 @@ function initUI() {
     const s = document.getElementById('sidebar');
     s.classList.toggle('collapsed');
     const svg = document.getElementById('toggle-svg');
-    svg.style.transform = s.classList.contains('collapsed') ? 'rotate(180deg)' : '';
-    setTimeout(() => state.map.invalidateSize(), 280);
+    if (svg) svg.style.transform = s.classList.contains('collapsed') ? 'rotate(180deg)' : '';
+    setTimeout(() => state.map.invalidateSize(), 320);
   });
+
+  // On mobile, start with panel collapsed so map is visible
+  if (window.innerWidth <= 640) {
+    document.getElementById('sidebar').classList.add('collapsed');
+    setTimeout(() => state.map.invalidateSize(), 100);
+  }
 }
 
 // ─── Load input ──────────────────────────────────────────────────────────────
